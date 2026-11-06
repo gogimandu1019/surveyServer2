@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>설문 결과</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <div class="card">
+    <div class="row-between">
+      <div><h1 id="title">설문 결과</h1><span id="state" class="badge"></span></div>
+      <div class="total"><div class="big" id="total">–</div><div class="muted small">명 응답</div></div>
+    </div>
+    <div class="actions" style="margin-top:12px"><a class="btn" id="toSurvey" href="#">설문으로</a><a class="btn" id="csv" href="#">CSV 다운로드 (엑셀용)</a></div>
+  </div>
+  <div id="status" role="status"></div>
+  <div id="list"></div>
+  <div id="ai"></div>
+  <footer id="footer"></footer>
+</main>
+<script src="/common.js"></script>
+<script>
+(function () {
+  var el = Survey.el;
+  var CODE = Survey.param("code", "code");
+  var REFRESH_SEC = 10;
+  var lastKey = null;   // 응답 수나 상태가 바뀔 때만 다시 그린다 (스크롤·주관식 순서 유지)
+  document.getElementById("toSurvey").href = "/survey.html?code=" + CODE;
+  document.getElementById("csv").href = "/api/excel?code=" + CODE;
+  document.getElementById("footer").textContent =
+    "새 응답이 있으면 " + REFRESH_SEC + "초 안에 자동으로 반영됩니다 (이 탭을 보고 있을 때만 확인)";
+
+  function bars(q, total) {
+    var rows = [];
+    // 여러 개 고르기는 한 사람이 여러 개를 고르므로 '응답자 수' 대비 비율로 보여준다.
+    var base = q.type === "multi" ? total : q.counts.reduce(function (a, c) { return a + c.count; }, 0);
+    if (q.type === "rating") {
+      rows.push(el("p", {class: "muted small avg"}, ["평균 ", el("b", {text: q.average == null ? "–" : q.average}), " / " + q.max]));
+    }
+    if (q.type === "multi") rows.push(el("p", {class: "muted small avg", text: "여러 개 선택 가능 · 비율은 전체 응답자 대비"}));
+    if (q.counts.length === 0 || base === 0) rows.push(el("p", {class: "muted small", text: "아직 응답이 없습니다."}));
+    else q.counts.forEach(function (c) {
+      var pct = Math.round(c.count / base * 100);
+      var label = q.type === "rating" ? c.label + "점" : String(c.label);
+      rows.push(el("div", {class: "bar-row"}, [
+        el("span", {title: label, text: label}),
+        el("div", {class: "bar", role: "img", "aria-label": label + " " + pct + "%"}, [el("i", {style: "width:" + pct + "%"})]),
+        el("span", {class: "num", text: c.count + " (" + pct + "%)"}),
+      ]));
+    });
+    if (q.otherTexts && q.otherTexts.length > 0) {
+      rows.push(el("p", {class: "muted small", style: "margin:14px 0 4px", text: "기타 의견"}));
+      rows.push(textList(q.otherTexts));
+    }
+    return rows;
+  }
+
+  function textList(texts) {
+    return el("ul", {class: "texts"}, texts.map(function (t) { return el("li", {text: t}); }));
+  }
+
+  function render(r) {
+    document.title = r.title + " 결과";
+    document.getElementById("title").textContent = r.title;
+    document.getElementById("total").textContent = r.cnt;
+    var state = document.getElementById("state");
+    state.textContent = r.open == 1 ? "진행 중" : "마감";
+    state.className = r.open == 1 ? "badge open" : "badge";
+    Survey.replace("list", r.results.map(function (q, i) {
+      var body = q.counts ? bars(q, r.cnt)
+        : [q.texts.length === 0 ? el("p", {class: "muted small", text: "아직 응답이 없습니다."}) : textList(q.texts)];
+      return el("div", {class: "card"}, [el("h2", {text: (i + 1) + ". " + q.label})].concat(body));
+    }));
+  }
+
+  async function load() {
+    try {
+      var r = (await Survey.api("GET", "/api/getResult?code=" + CODE)).data;
+      Survey.replace("status", []);
+      var key = r.cnt + "/" + r.open + "/" + r.title;
+      if (key !== lastKey) { lastKey = key; render(r); }
+    } catch (e) {
+      // 예전 숫자가 최신인 것처럼 보이지 않게, 실패를 화면에 알린다.
+      Survey.replace("status", [Survey.errorCard("결과를 새로 불러오지 못했습니다 (" +
+        new Date().toLocaleTimeString() + "). " + e.message)]);
+    }
+  }
+
+  // ---- AI 도우미: 결과를 바탕으로 질문에 답한다. 대화는 이 탭에만 남는다. ----
+  function setupAi() {
+    var history = [];
+    var log = el("div", {class: "ai-log", "aria-live": "polite"});
+    var input = el("textarea", {maxlength: 2000, rows: 2, "aria-label": "결과에 대한 질문",
+                                placeholder: "예: 가장 많이 나온 불만은 뭐야? / 점수가 낮은 이유를 주관식에서 찾아줘"});
+    var button = el("button", {class: "btn primary", type: "submit", text: "물어보기"});
+    var suggestions = ["전체 결과를 세 줄로 요약해줘", "눈에 띄는 점이나 문제를 알려줘", "다음 회의에서 다룰 안건을 뽑아줘"];
+
+    function bubble(role, text) {
+      var node = el("div", {class: "ai-bubble " + role, text: text});
+      log.appendChild(node);
+      node.scrollIntoView({behavior: "smooth", block: "nearest"});
+      return node;
+    }
+
+    async function ask(question) {
+      question = question.trim();
+      if (question === "" || button.disabled) return;
+      bubble("user", question);
+      var waiting = bubble("assistant pending", "결과를 살펴보는 중…");
+      input.value = "";
+      button.disabled = true;
+      try {
+        var res = await Survey.api("POST", "/api/aiAsk?code=" + CODE, {question: question, history: history});
+        waiting.textContent = res.answer;   // AI 답은 글자로만 넣는다
+        waiting.className = "ai-bubble assistant";
+        history.push({role: "user", content: question}, {role: "assistant", content: res.answer});
+        history = history.slice(-6);
+      } catch (e) {
+        waiting.textContent = e.message;
+        waiting.className = "ai-bubble assistant error";
+      }
+      button.disabled = false;
+      input.focus();
+    }
+
+    var form = el("form", {class: "ai-form", onsubmit: function (e) { e.preventDefault(); ask(input.value); }},
+                  [input, button]);
+    input.addEventListener("keydown", function (e) {   // Enter 로 보내고, Shift+Enter 는 줄바꿈
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(input.value); }
+    });
+    Survey.replace("ai", [el("div", {class: "card ai-card"}, [
+      el("h2", {text: "결과에 대해 물어보기 (AI)"}),
+      el("p", {class: "muted small", text: "AI가 위 결과(주관식 답 포함)를 바탕으로 답합니다. 질문할 때 결과 요약이 "
+        + "AI 서비스(OpenRouter)로 보내집니다. 응답자를 알 수 있는 정보는 원래 저장되지 않으므로 보내지 않습니다. AI 답은 틀릴 수 있어요."}),
+      el("div", {class: "actions ai-suggest"}, suggestions.map(function (s) {
+        return el("button", {class: "btn", type: "button", text: s, onclick: function () { ask(s); }});
+      })),
+      log,
+      form,
+    ])]);
+  }
+
+  load();
+  Survey.api("GET", "/api/aiStatus").then(function (res) { if (res.enabled) setupAi(); }, function () {});
+  setInterval(function () { if (!document.hidden) load(); }, REFRESH_SEC * 1000);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) load(); });
+})();
+</script>
+</body>
+</html>

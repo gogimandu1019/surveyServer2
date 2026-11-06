@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "survey": {
+      "command": "python3",
+      "args": ["mcp_server/survey_mcp.py"]
+    }
+  }
+}

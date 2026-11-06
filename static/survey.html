@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>설문</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <div class="card"><h1 id="title">불러오는 중…</h1><p class="desc" id="desc"></p></div>
+  <form id="body" novalidate></form>
+  <div id="ai"></div>
+  <footer>익명 설문 · 이름이나 접속 정보는 저장되지 않습니다 · <a id="resultsLink" href="#">결과 보기</a></footer>
+</main>
+<script src="/common.js"></script>
+<script>
+(function () {
+  var el = Survey.el;
+  var CODE = Survey.param("code", "code");
+  var RESULT_URL = "/result.html?code=" + CODE;
+  var MAX_TEXT = 5000, MAX_OTHER = 1000;   // 서버(server.py)의 MAX_TEXT_ANSWER, MAX_OTHER_TEXT 와 같게
+  var OTHER = "__other__";
+  var survey = null;
+  var form = document.getElementById("body");
+  document.getElementById("resultsLink").href = RESULT_URL;
+
+  function showOnly(card) {
+    Survey.replace(form, [card]);
+    window.scrollTo(0, 0);
+  }
+
+  // 고르기 문항(single/multi)의 선택지 + '기타' 입력칸
+  function choiceInput(q, inputType) {
+    var rows = q.options.map(function (o) {
+      return el("label", {class: "opt"}, [el("input", {type: inputType, name: q.id, value: o}), o]);
+    });
+    if (q.allowOther) {
+      var check = el("input", {type: inputType, name: q.id, value: OTHER});
+      var text = el("input", {type: "text", name: q.id + "#other", placeholder: "직접 입력", maxlength: MAX_OTHER,
+                              "aria-label": "기타 내용",
+                              oninput: function () { if (text.value !== "") check.checked = true; }});
+      rows.push(el("label", {class: "opt"}, [check, "기타 ", text]));
+    }
+    return el("div", {class: "opts"}, rows);
+  }
+
+  function questionInput(q) {
+    switch (q.type) {
+      case "text": return el("input", {type: "text", name: q.id, maxlength: MAX_TEXT});
+      case "textarea": return el("textarea", {name: q.id, maxlength: MAX_TEXT});
+      case "date": return el("input", {type: "date", name: q.id});
+      case "yesno":
+        return el("div", {class: "yesno"}, ["예", "아니오"].map(function (v) {
+          return el("label", {class: "opt"}, [el("input", {type: "radio", name: q.id, value: v}), v]);
+        }));
+      case "rating":
+        var scores = [];
+        for (var n = 1; n <= q.max; n++) {
+          scores.push(el("label", {}, [el("input", {type: "radio", name: q.id, value: n}), String(n)]));
+        }
+        return el("div", {}, [el("div", {class: "rating"}, scores),
+                              el("div", {class: "scale"}, [el("span", {text: "1 낮음"}), el("span", {text: q.max + " 높음"})])]);
+      case "single": return choiceInput(q, "radio");
+      case "multi": return choiceInput(q, "checkbox");
+    }
+    return el("p", {class: "error", text: "이 화면이 모르는 문항 종류입니다: " + q.type});
+  }
+
+  // 문항 → 서버에 보낼 값
+  function collect() {
+    var data = {};
+    survey.q.forEach(function (q) {
+      var inputs = Array.from(form.querySelectorAll('[name="' + CSS.escape(q.id) + '"]'));
+      if (q.type === "multi") {
+        data[q.id] = inputs.filter(function (x) { return x.checked; }).map(function (x) { return x.value; });
+      } else if (q.type === "single" || q.type === "yesno" || q.type === "rating") {
+        var picked = inputs.filter(function (x) { return x.checked; })[0];
+        data[q.id] = picked ? picked.value : "";
+      } else {
+        data[q.id] = inputs.length ? inputs[0].value : "";
+      }
+      if (q.allowOther) data[q.id + "#other"] = form.elements[q.id + "#other"].value;
+    });
+    return data;
+  }
+
+  // 필수 항목을 먼저 화면에서 확인한다. 값 형식 검사는 서버가 한다 (서버 메시지를 그대로 보여줌).
+  function missingRequired(data) {
+    return survey.q.filter(function (q) {
+      if (!q.required) return false;
+      var v = data[q.id];
+      var empty = Array.isArray(v) ? v.length === 0 : String(v).trim() === "";
+      var otherEmpty = q.allowOther && (Array.isArray(v) ? v.indexOf(OTHER) >= 0 : v === OTHER)
+                       && String(data[q.id + "#other"]).trim() === "";
+      return empty || otherEmpty;
+    });
+  }
+
+  function render() {
+    var cards = survey.q.map(function (q, i) {
+      return el("div", {class: "card", id: "card_" + q.id}, [
+        el("h2", {}, [(i + 1) + ". " + q.label, q.required ? el("span", {class: "req", text: "*", title: "필수"}) : null]),
+        questionInput(q),
+      ]);
+    });
+    var button = el("button", {class: "btn primary block", type: "submit", text: "제출하기"});
+    var err = el("p", {class: "error", id: "err", role: "alert"});
+    Survey.replace(form, cards.concat([button, err]));
+
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      if (button.disabled) return;   // 두 번 누르기 방지
+      var data = collect();
+      var missing = missingRequired(data);
+      form.querySelectorAll(".card.invalid").forEach(function (c) { c.classList.remove("invalid"); });
+      if (missing.length > 0) {
+        missing.forEach(function (q) { document.getElementById("card_" + q.id).classList.add("invalid"); });
+        err.textContent = "필수 항목을 채워 주세요: " + missing.map(function (q) { return "'" + q.label + "'"; }).join(", ");
+        document.getElementById("card_" + missing[0].id).scrollIntoView({behavior: "smooth", block: "center"});
+        return;
+      }
+      button.disabled = true;
+      button.textContent = "보내는 중…";
+      err.textContent = "";
+      try {
+        await Survey.api("POST", "/api/saveAnswer?code=" + CODE, data);
+        Survey.replace("ai", []);
+        showOnly(Survey.notice("감사합니다!", "응답이 익명으로 저장되었습니다.", {href: RESULT_URL, text: "결과 보기"}));
+      } catch (e) {
+        err.textContent = e.message;   // 서버 메시지에는 문항 제목이 들어 있으므로 textContent 로만 넣는다
+        button.disabled = false;
+        button.textContent = "제출하기";
+      }
+    });
+  }
+
+  // ---- AI 도우미: 자유롭게 쓴 글로 답을 채운다. 제출은 응답자가 확인하고 직접 한다. ----
+  function setValue(q, value, other) {
+    var inputs = Array.from(form.querySelectorAll('[name="' + CSS.escape(q.id) + '"]'));
+    if (q.type === "multi") {
+      inputs.forEach(function (x) { x.checked = value.indexOf(x.value) >= 0; });
+    } else if (q.type === "single" || q.type === "yesno" || q.type === "rating") {
+      inputs.forEach(function (x) { x.checked = x.value === String(value); });
+    } else if (inputs[0]) {
+      inputs[0].value = value;
+    }
+    var otherInput = form.querySelector('[name="' + CSS.escape(q.id + "#other") + '"]');
+    if (otherInput && other !== undefined) otherInput.value = other;
+  }
+
+  function applyAnswers(answers) {
+    var first = null;
+    survey.q.forEach(function (q) {
+      var card = document.getElementById("card_" + q.id);
+      card.classList.remove("ai-filled");
+      if (!(q.id in answers)) return;
+      setValue(q, answers[q.id], answers[q.id + "#other"]);
+      card.classList.remove("invalid");
+      card.classList.add("ai-filled");
+      if (!first) first = card;
+    });
+    if (first) first.scrollIntoView({behavior: "smooth", block: "center"});
+  }
+
+  function setupAi() {
+    var input = el("textarea", {id: "aiText", maxlength: 2000, rows: 3,
+                                placeholder: "예: 팀 분위기는 4점 정도로 괜찮고, 회의가 너무 많아서 줄었으면 좋겠어요. 재택은 늘리면 좋겠어요."});
+    var button = el("button", {class: "btn primary", type: "button", text: "AI로 답 채우기"});
+    var msg = el("p", {class: "small ai-msg", role: "status"});
+    button.addEventListener("click", async function () {
+      if (button.disabled) return;
+      if (input.value.trim() === "") { msg.textContent = "하고 싶은 말을 먼저 적어 주세요."; return; }
+      button.disabled = true;
+      button.textContent = "AI가 읽는 중…";
+      msg.textContent = "";
+      try {
+        var res = await Survey.api("POST", "/api/aiFill?code=" + CODE, {text: input.value});
+        applyAnswers(res.answers);
+        msg.textContent = (res.filled.length > 0
+          ? res.filled.length + "개 문항을 채웠습니다. 위에서 확인하고 고친 뒤 '제출하기'를 눌러 주세요. "
+          : "글에서 답을 찾지 못했습니다. 문항에 맞게 조금 더 자세히 써 보세요. ") + (res.comment || "");
+      } catch (e) {
+        msg.textContent = e.message;
+      }
+      button.disabled = false;
+      button.textContent = "AI로 답 채우기";
+    });
+    Survey.replace("ai", [el("div", {class: "card ai-card"}, [
+      el("h2", {text: "말로 답하기 (AI)"}),
+      el("p", {class: "muted small", text: "하고 싶은 말을 편하게 쓰면 AI가 위 문항에 맞춰 답을 채워 줍니다. "
+        + "자동으로 제출되지는 않아요. 쓴 글은 답을 채우는 데만 AI 서비스(OpenRouter)로 보내지고, 이 서버에는 저장되지 않습니다."}),
+      input,
+      el("div", {class: "actions ai-actions"}, [button]),
+      msg,
+    ])]);
+  }
+
+  (async function load() {
+    try {
+      survey = (await Survey.api("GET", "/api/getSurvey?code=" + CODE)).data;
+    } catch (e) {
+      document.getElementById("title").textContent = "설문을 열 수 없습니다";
+      document.getElementById("desc").textContent = e.message;
+      Survey.replace(form, []);
+      return;
+    }
+    document.title = survey.title;
+    document.getElementById("title").textContent = survey.title;
+    document.getElementById("desc").textContent = survey.desc;
+    var link = {href: RESULT_URL, text: "결과 보기"};
+    if (survey.open == 0) return showOnly(Survey.notice("마감된 설문입니다", "더 이상 응답을 받지 않습니다.", link));
+    if (survey.already == 1) return showOnly(Survey.notice("이미 응답하셨습니다", "이 설문은 한 번만 응답할 수 있습니다.", link));
+    render();
+    try {
+      if ((await Survey.api("GET", "/api/aiStatus")).enabled) setupAi();
+    } catch (e) { /* AI 가 안 되면 상자를 안 보여줄 뿐, 설문은 그대로 */ }
+  })();
+})();
+</script>
+</body>
+</html>

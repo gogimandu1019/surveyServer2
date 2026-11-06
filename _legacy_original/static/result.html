@@ -1,0 +1,100 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>설문 결과</title>
+<link rel="stylesheet" type="text/css" href="/style.css" />
+</head>
+<body onload="loadData(); setInterval('loadData()', 5000);">
+<main>
+  <div class="card">
+    <div class="row-between">
+      <div><h1 id="title">설문 결과</h1><span id="state" class="badge"></span></div>
+      <div style="text-align:right"><div class="big" id="total">–</div><div class="muted small">명 응답</div></div>
+    </div>
+    <div class="actions" style="margin-top:12px"><a class="btn" id="toSurvey" href="#">설문으로</a><a class="btn" id="csv" href="#">엑셀 다운로드</a></div>
+  </div>
+  <div id="list"></div>
+  <footer>10초마다 자동으로 새로 고침됩니다</footer>
+</main>
+<script type="text/javascript">
+var CODE = "";
+var arr = location.search.substring(1).split("&");
+for (var i = 0; i < arr.length; i++) {
+	if (arr[i].split("=")[0] == "code") CODE = arr[i].split("=")[1];
+}
+CODE = CODE.replace(/[^a-z0-9]/g, ""); // 해킹 방지 (2016 보안감사)
+document.getElementById("toSurvey").href = "/survey.html?code=" + CODE;
+document.getElementById("csv").href = "/api/excel?code=" + CODE;
+
+// 데이터 로드 + 그리기 + 막대그래프 (나중에 차트 라이브러리로 교체)
+function loadData() {
+	var xhr = new XMLHttpRequest();
+	xhr.open("GET", "/api/getResult?code=" + CODE, true);
+	xhr.onreadystatechange = function() {
+		if (xhr.readyState == 4 && xhr.status == 200) {
+			var res = eval("(" + xhr.responseText + ")");
+			if (res.result != "OK") {
+				document.getElementById("title").innerHTML = "설문을 찾을 수 없습니다";
+				return;
+			}
+			var r = res.data;
+			document.title = r.title + " 결과";
+			document.getElementById("title").innerHTML = String(r.title).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+			document.getElementById("total").innerHTML = r.cnt;
+			if (r.open == 1) {
+				document.getElementById("state").innerHTML = "진행 중";
+				document.getElementById("state").className = "badge open";
+			} else {
+				document.getElementById("state").innerHTML = "마감";
+				document.getElementById("state").className = "badge";
+			}
+			var html = "";
+			for (var i = 0; i < r.results.length; i++) {
+				var q = r.results[i];
+				html += "<div class='card'><h2>" + (i + 1) + ". " + String(q.label).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</h2>";
+				if (q.counts) {
+					if (q.type == "rating") {
+						var avg = q.average;
+						if (avg == null) avg = "–";
+						html += "<p class='muted small' style='margin-top:-6px'>평균 <b>" + avg + "</b> / " + q.max + "</p>";
+					}
+					var sum = 0;
+					for (var j = 0; j < q.counts.length; j++) sum = sum + q.counts[j].count;
+					if (q.counts.length == 0) html += "<p class='muted small'>아직 응답이 없습니다.</p>";
+					for (var j = 0; j < q.counts.length; j++) {
+						var pct = 0;
+						if (sum > 0) pct = Math.round(q.counts[j].count / sum * 100);
+						var lb = String(q.counts[j].label).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+						if (q.type == "rating") lb = lb + "점";
+						html += "<div class='bar-row'><span title=\"" + lb + "\">" + lb + "</span><div class='bar'><i style='width:" + pct + "%'></i></div><span class='num'>" + q.counts[j].count + " (" + pct + "%)</span></div>";
+					}
+					if (q.otherTexts && q.otherTexts.length > 0) {
+						html += "<p class='muted small' style='margin:14px 0 4px'>기타 의견</p><ul class='texts'>";
+						for (var j = 0; j < q.otherTexts.length; j++) {
+							html += "<li>" + String(q.otherTexts[j]).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</li>";
+						}
+						html += "</ul>";
+					}
+				} else {
+					if (q.texts.length == 0) {
+						html += "<p class='muted small'>아직 응답이 없습니다.</p>";
+					} else {
+						html += "<ul class='texts'>";
+						for (var j = 0; j < q.texts.length; j++) {
+							html += "<li>" + String(q.texts[j]).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</li>";
+						}
+						html += "</ul>";
+					}
+				}
+				html += "</div>";
+			}
+			document.getElementById("list").innerHTML = html;
+		}
+	}
+	xhr.send(null);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# 비밀: OpenRouter API 키 (관리 화면에서 저장됨). 절대 올리지 않는다.
+ai_settings.json
+
+# 실제 응답 데이터. 서버를 처음 실행하면 빈 DB + 예시 설문이 새로 만들어진다.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 강사용 정답 버전과 정답지 (공개 저장소에 올리지 않음)
+_reference_clean/
+
+# 기타
+.DS_Store
+__pycache__/
+*.pyc
+.claude/settings.local.json

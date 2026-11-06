@@ -1,0 +1,46 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>팀 설문</title>
+<link rel="stylesheet" type="text/css" href="/style.css" />
+<!-- <script src="/js/jquery-1.4.2.min.js"></script> -->
+</head>
+<body onload="init()">
+<main>
+  <div class="card"><h1>진행 중인 설문</h1><p class="desc">모든 설문은 익명으로 진행됩니다.</p></div>
+  <div id="list"></div>
+</main>
+<script type="text/javascript">
+// 메인 화면
+function init() {
+	var xhr = new XMLHttpRequest();
+	xhr.open("GET", "/api/getList", true);
+	xhr.onreadystatechange = function() {
+		if (xhr.readyState == 4) {
+			if (xhr.status == 200) {
+				var res = eval("(" + xhr.responseText + ")");
+				var html = "";
+				if (res.data.length == 0) {
+					html = "<div class='card notice muted'>지금 진행 중인 설문이 없습니다.</div>";
+				}
+				for (var i = 0; i < res.data.length; i++) {
+					var t = String(res.data[i].title).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+					var d = String(res.data[i].desc).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+					html += "<a class='card' style='display:block;text-decoration:none;color:inherit' href='/survey.html?code=" + res.data[i].code + "'>";
+					html += "<h2 style='margin-bottom:4px'>" + t + "</h2>";
+					if (d != "") html += "<p class='desc small'>" + d + "</p>";
+					html += "</a>";
+				}
+				document.getElementById("list").innerHTML = html;
+			} else {
+				alert("에러!!");
+			}
+		}
+	}
+	xhr.send(null);
+}
+</script>
+</body>
+</html>

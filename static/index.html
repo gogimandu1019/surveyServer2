@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>팀 설문</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <div class="card"><h1>진행 중인 설문</h1><p class="desc">모든 설문은 익명으로 진행됩니다.</p></div>
+  <div id="list"><p class="muted small">불러오는 중…</p></div>
+</main>
+<script src="/common.js"></script>
+<script>
+(async function () {
+  var el = Survey.el;
+  try {
+    var res = await Survey.api("GET", "/api/getList");
+    if (res.data.length === 0) {
+      Survey.replace("list", [el("div", {class: "card notice muted", text: "지금 진행 중인 설문이 없습니다."})]);
+      return;
+    }
+    Survey.replace("list", res.data.map(function (s) {
+      return el("a", {class: "card card-link", href: "/survey.html?code=" + encodeURIComponent(s.code)}, [
+        el("h2", {text: s.title}),
+        s.desc ? el("p", {class: "desc small", text: s.desc}) : null,
+      ]);
+    }));
+  } catch (e) {
+    Survey.replace("list", [Survey.errorCard("설문 목록을 불러오지 못했습니다. " + e.message)]);
+  }
+})();
+</script>
+</body>
+</html>

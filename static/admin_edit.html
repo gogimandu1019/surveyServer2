@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>설문 편집</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <div class="card">
+    <div class="row-between"><h1 id="heading">새 설문</h1><a class="btn" href="/admin.html">← 목록</a></div>
+    <label class="field-label" for="title">설문 제목</label>
+    <input type="text" id="title" maxlength="200" placeholder="예: 3분기 팀 회고">
+    <label class="field-label" for="desc">안내 문구 (선택)</label>
+    <textarea id="desc" maxlength="2000" style="min-height:64px" placeholder="응답자에게 보여줄 설명"></textarea>
+  </div>
+  <div id="lock"></div>
+  <div id="qs"></div>
+  <button class="btn block" id="add" type="button">＋ 문항 추가</button>
+  <p class="error" id="err" role="alert"></p>
+  <div class="save-bar"><button class="btn primary" id="save" type="button">저장</button></div>
+</main>
+<script src="/common.js"></script>
+<script>
+(function () {
+  var el = Survey.el;
+  var ID = Survey.param("id", "id");
+  var TYPES = [["text", "단답"], ["textarea", "장문"], ["rating", "점수"], ["single", "하나 고르기"],
+               ["multi", "여러 개 고르기"], ["yesno", "예 / 아니오"], ["date", "날짜"]];
+  var questions = [];     // 화면에서 고치는 문항. 각 항목은 {data: 문항, card: 화면 카드}
+  var locked = false;     // 응답이 있으면 문항은 못 바꾼다 (제목·안내만)
+  var saving = false;
+  var list = document.getElementById("qs");
+  var err = document.getElementById("err");
+  var saveButton = document.getElementById("save");
+
+  // 새 문항 기본값은 여기 한 곳에만 둔다.
+  function newQuestion() {
+    return {id: "q" + Math.random().toString(16).slice(2, 10), type: "single", label: "", required: true,
+            options: ["", ""], allowOther: false};
+  }
+
+  function field(label, control) {
+    return [el("div", {class: "field-label", text: label}), control];
+  }
+
+  function checkbox(label, checked, onChange) {
+    return el("label", {class: "check"}, [
+      el("input", {type: "checkbox", checked: !!checked, disabled: locked,
+                   onchange: function (e) { onChange(e.target.checked); }}),
+      label,
+    ]);
+  }
+
+  // 타입에 따라 달라지는 칸만 따로 그린다. 타입을 바꿔도 질문 입력칸은 그대로라 포커스가 날아가지 않는다.
+  function typeSettings(q) {
+    if (q.type === "single" || q.type === "multi") {
+      if (!q.options) q.options = ["", ""];
+      var options = el("textarea", {rows: 4, disabled: locked,
+                                    oninput: function (e) { q.options = e.target.value.split("\n"); }});
+      options.value = q.options.join("\n");
+      return field("선택지 (한 줄에 하나씩)", options)
+        .concat([checkbox("'기타 (직접 입력)' 추가", q.allowOther, function (v) { q.allowOther = v; })]);
+    }
+    if (q.type === "rating") {
+      var select = el("select", {class: "auto", disabled: locked,
+                                 onchange: function (e) { q.max = parseInt(e.target.value, 10); }},
+        [el("option", {value: 5, text: "1 ~ 5"}), el("option", {value: 10, text: "1 ~ 10"})]);
+      select.value = q.max == 10 ? "10" : "5";
+      return field("점수 범위", select);
+    }
+    return [];
+  }
+
+  function move(item, step) {
+    var i = questions.indexOf(item), j = i + step;   // 누를 때 위치를 다시 찾는다 (미리 박아 둔 번호 X)
+    if (j < 0 || j >= questions.length) return;
+    questions.splice(i, 1);
+    questions.splice(j, 0, item);
+    renumber();
+  }
+
+  function remove(item) {
+    if (item.data.label.trim() !== "" && !window.confirm("이 문항을 삭제할까요?")) return;
+    questions.splice(questions.indexOf(item), 1);
+    renumber();
+  }
+
+  // 순서가 바뀌면 카드를 다시 만들지 않고 옮기기만 한다.
+  function renumber() {
+    Survey.replace(list, questions.map(function (item) { return item.card; }));
+    questions.forEach(function (item, i) {
+      item.card.querySelector(".q-num").textContent = i + 1;
+      item.card.querySelector(".up").disabled = locked || i === 0;
+      item.card.querySelector(".down").disabled = locked || i === questions.length - 1;
+    });
+  }
+
+  function questionCard(q) {
+    var item = {data: q, card: null};
+    var settings = el("div", {}, typeSettings(q));
+    var typeSelect = el("select", {class: "auto", disabled: locked, "aria-label": "문항 종류",
+                                   onchange: function (e) {
+                                     q.type = e.target.value;
+                                     Survey.replace(settings, typeSettings(q));
+                                   }},
+      TYPES.map(function (t) { return el("option", {value: t[0], text: t[1]}); }));
+    typeSelect.value = q.type;
+    var label = el("input", {type: "text", maxlength: 500, placeholder: "질문을 입력하세요", disabled: locked,
+                             oninput: function (e) { q.label = e.target.value; }});
+    label.value = q.label;
+    item.card = el("div", {class: "card"}, [
+      el("div", {class: "q-head"}, [
+        el("b", {class: "muted q-num"}),
+        typeSelect,
+        el("span", {class: "q-tools"}, [
+          el("button", {class: "btn small-btn up", type: "button", text: "↑", title: "위로",
+                        onclick: function () { move(item, -1); }}),
+          el("button", {class: "btn small-btn down", type: "button", text: "↓", title: "아래로",
+                        onclick: function () { move(item, 1); }}),
+          el("button", {class: "btn small-btn danger", type: "button", text: "✕", title: "삭제", disabled: locked,
+                        onclick: function () { remove(item); }}),
+        ]),
+      ]),
+      el("div", {class: "field-label", text: "질문"}), label,
+      settings,
+      checkbox("필수 응답", q.required, function (v) { q.required = v; }),
+    ]);
+    return item;
+  }
+
+  function addQuestion(q) {
+    questions.push(questionCard(q));
+    renumber();
+  }
+
+  // 화면 상태 → 서버로 보낼 문항. 타입에 맞는 필드만 보낸다.
+  function toPayload(q) {
+    var out = {id: q.id, type: q.type, label: q.label.trim(), required: q.required === true};
+    if (q.type === "single" || q.type === "multi") {
+      out.options = (q.options || []).map(function (x) { return x.trim(); }).filter(Boolean);
+      out.allowOther = q.allowOther === true;
+    }
+    if (q.type === "rating") out.max = q.max == 10 ? 10 : 5;
+    return out;
+  }
+
+  async function save() {
+    if (saving) return;   // 빠르게 두 번 눌러도 설문이 두 개 생기지 않게
+    saving = true;
+    saveButton.disabled = true;
+    err.textContent = "";
+    var data = {title: document.getElementById("title").value, desc: document.getElementById("desc").value,
+                q: questions.map(function (item) { return toPayload(item.data); })};
+    if (ID === "") data.cmd = "new";
+    else { data.cmd = "update"; data.id = ID; }
+    try {
+      await Survey.api("POST", "/api/adminProc", data, {admin: true});
+      location.href = "/admin.html";
+    } catch (e) {
+      err.textContent = e.message;
+      saving = false;
+      saveButton.disabled = false;
+    }
+  }
+
+  document.getElementById("add").addEventListener("click", function () { addQuestion(newQuestion()); });
+  saveButton.addEventListener("click", save);
+
+  (async function init() {
+    if (ID === "") { addQuestion(newQuestion()); return; }
+    saveButton.disabled = true;   // 불러오기 전에는 저장하지 못하게 (빈 문항으로 덮어쓰기 방지)
+    var s;
+    try {
+      s = (await Survey.api("GET", "/api/adminGet?id=" + ID)).data;
+    } catch (e) {
+      document.getElementById("heading").textContent = "설문을 불러오지 못했습니다";
+      err.textContent = e.message + " 목록으로 돌아가 다시 시도하세요.";
+      document.getElementById("add").hidden = true;
+      return;
+    }
+    document.getElementById("heading").textContent = "설문 수정";
+    document.getElementById("title").value = s.title;
+    document.getElementById("desc").value = s.desc;
+    if (s.cnt > 0) {
+      locked = true;
+      document.getElementById("add").hidden = true;
+      Survey.replace("lock", [el("div", {class: "card lock-card"}, [
+        "응답이 " + s.cnt + "개 있어서 문항은 바꿀 수 없습니다. 제목과 안내 문구만 고칠 수 있어요. 문항을 바꾸려면 목록에서 ",
+        el("b", {text: "복사해서 새 설문"}), "을 쓰세요."])]);
+    }
+    s.q.forEach(addQuestion);
+    saveButton.disabled = false;
+  })();
+})();
+</script>
+</body>
+</html>

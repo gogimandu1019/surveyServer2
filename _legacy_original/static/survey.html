@@ -1,0 +1,160 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>설문</title>
+<link rel="stylesheet" type="text/css" href="/style.css" />
+</head>
+<body onload="init()">
+<main>
+  <div class="card"><h1 id="title">불러오는 중…</h1><p class="desc" id="desc"></p></div>
+  <div id="body"></div>
+  <footer>익명 설문 · 이름이나 접속 정보는 저장되지 않습니다 · <a id="resultsLink" href="#">결과 보기</a></footer>
+</main>
+<script type="text/javascript">
+var CODE = "";
+var gData = null;
+var gFlag = false;   // 중복클릭 방지
+var tmp;
+
+// IE6 에서 안됨
+var arr = location.search.substring(1).split("&");
+for (var i = 0; i < arr.length; i++) {
+	if (arr[i].split("=")[0] == "code") CODE = arr[i].split("=")[1];
+}
+CODE = CODE.replace(/[^a-z0-9]/g, ""); // 해킹 방지 (2016 보안감사)
+document.getElementById("resultsLink").href = "/result.html?code=" + CODE;
+
+function init() {
+	var xhr = new XMLHttpRequest();
+	xhr.open("GET", "/api/getSurvey?code=" + CODE, true);
+	xhr.onreadystatechange = function() {
+		if (xhr.readyState == 4) {
+			if (xhr.status == 200) {
+				var res = eval("(" + xhr.responseText + ")");
+				if (res.result != "OK") {
+					document.getElementById("title").innerHTML = "설문을 찾을 수 없습니다";
+					return;
+				}
+				gData = res.data;
+				document.title = gData.title;
+				document.getElementById("title").innerHTML = String(gData.title).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+				document.getElementById("desc").innerHTML = String(gData.desc).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+				if (gData.open == 0) {
+					document.getElementById("body").innerHTML = "<div class='card notice'><h1>마감된 설문입니다</h1><p class='desc'>더 이상 응답을 받지 않습니다.</p><p><a href='/result.html?code=" + CODE + "'>결과 보기</a></p></div>";
+					return;
+				}
+				if (gData.already == 1) {
+					document.getElementById("body").innerHTML = "<div class='card notice'><h1>이미 응답하셨습니다</h1><p class='desc'>이 설문은 한 번만 응답할 수 있습니다.</p><p><a href='/result.html?code=" + CODE + "'>결과 보기</a></p></div>";
+					return;
+				}
+				// 화면 그리기
+				var html = "";
+				for (var i = 0; i < gData.q.length; i++) {
+					var q = gData.q[i];
+					var lbl = String(q.label).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+					html += "<div class='card'><h2>" + (i + 1) + ". " + lbl;
+					if (q.required == true) html += "<span class='req'>*</span>";
+					html += "</h2>";
+					if (q.type == "text") {
+						html += "<input type='text' name='" + q.id + "' maxlength='500'>";
+					} else if (q.type == "textarea") {
+						html += "<textarea name='" + q.id + "' maxlength='5000'></textarea>";
+					} else if (q.type == "date") {
+						html += "<input type='date' name='" + q.id + "'>";
+					} else if (q.type == "yesno") {
+						html += "<div class='yesno'>";
+						html += "<label class='opt'><input type='radio' name='" + q.id + "' value='예'>예</label>";
+						html += "<label class='opt'><input type='radio' name='" + q.id + "' value='아니오'>아니오</label>";
+						html += "</div>";
+					} else if (q.type == "rating") {
+						html += "<div class='rating'>";
+						for (var j = 1; j <= q.max; j++) {
+							html += "<label><input type='radio' name='" + q.id + "' value='" + j + "'>" + j + "</label>";
+						}
+						html += "</div><div class='scale'><span>전혀 아니다</span><span>매우 그렇다</span></div>";
+					} else if (q.type == "single") {
+						html += "<div class='opts'>";
+						for (var j = 0; j < q.options.length; j++) {
+							var o = String(q.options[j]).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+							html += "<label class='opt'><input type='radio' name='" + q.id + "' value='" + o + "'>" + o + "</label>";
+						}
+						if (q.allowOther == true) {
+							html += "<label class='opt'><input type='radio' name='" + q.id + "' value='__other__' id='oth_" + q.id + "'>기타 <input type='text' name='" + q.id + "#other' placeholder='직접 입력' maxlength='1000' onkeyup=\"if(this.value!='')document.getElementById('oth_" + q.id + "').checked=true;\"></label>";
+						}
+						html += "</div>";
+					} else if (q.type == "multi") {
+						// single 이랑 똑같음 (radio -> checkbox)
+						html += "<div class='opts'>";
+						for (var j = 0; j < q.options.length; j++) {
+							var o = String(q.options[j]).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+							html += "<label class='opt'><input type='checkbox' name='" + q.id + "' value='" + o + "'>" + o + "</label>";
+						}
+						if (q.allowOther == true) {
+							html += "<label class='opt'><input type='checkbox' name='" + q.id + "' value='__other__' id='oth_" + q.id + "'>기타 <input type='text' name='" + q.id + "#other' placeholder='직접 입력' maxlength='1000' onkeyup=\"if(this.value!='')document.getElementById('oth_" + q.id + "').checked=true;\"></label>";
+						}
+						html += "</div>";
+					}
+					html += "</div>";
+				}
+				html += "<button class='btn primary block' type='button' onclick='doSubmit()'>제출하기</button><p class='error' id='err'></p>";
+				document.getElementById("body").innerHTML = html;
+			} else {
+				alert("서버 오류 : " + xhr.status);
+			}
+		}
+	}
+	xhr.send(null);
+}
+
+// 저장 (validation 은 서버에서 함)
+function doSubmit() {
+	if (gFlag == true) return;
+	var data = {};
+	for (var i = 0; i < gData.q.length; i++) {
+		var q = gData.q[i];
+		var els = document.getElementsByName(q.id);
+		if (q.type == "multi") {
+			data[q.id] = [];
+			for (var j = 0; j < els.length; j++) {
+				if (els[j].checked) data[q.id].push(els[j].value);
+			}
+		} else if (q.type == "single" || q.type == "yesno" || q.type == "rating") {
+			data[q.id] = "";
+			for (var j = 0; j < els.length; j++) {
+				if (els[j].checked) data[q.id] = els[j].value;
+			}
+		} else {
+			data[q.id] = els[0].value;
+		}
+		if (q.allowOther == true) {
+			data[q.id + "#other"] = document.getElementsByName(q.id + "#other")[0].value;
+		}
+	}
+	gFlag = true;
+	document.getElementById("err").innerHTML = "";
+	var xhr = new XMLHttpRequest();
+	xhr.open("POST", "/api/saveAnswer?code=" + CODE, true);
+	xhr.setRequestHeader("Content-Type", "application/json");
+	xhr.onreadystatechange = function() {
+		if (xhr.readyState == 4) {
+			gFlag = false;
+			if (xhr.status == 200) {
+				var res = eval("(" + xhr.responseText + ")");
+				if (res.result == "OK") {
+					document.getElementById("body").innerHTML = "<div class='card notice'><h1>감사합니다!</h1><p class='desc'>응답이 익명으로 저장되었습니다.</p><p><a href='/result.html?code=" + CODE + "'>결과 보기</a></p></div>";
+					window.scrollTo(0, 0);
+				} else {
+					document.getElementById("err").innerHTML = res.msg;
+				}
+			} else {
+				alert("서버 오류 : " + xhr.status);
+			}
+		}
+	}
+	xhr.send(JSON.stringify(data));
+}
+</script>
+</body>
+</html>

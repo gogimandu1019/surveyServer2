@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>설문 관리</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main class="wide">
+  <div class="card row-between">
+    <div><h1>설문 관리</h1><p class="desc small">이 화면은 이 노트북에서만 열립니다.</p></div>
+    <a class="btn primary" href="/admin_edit.html">＋ 새 설문</a>
+  </div>
+  <div id="status" role="status"></div>
+  <details class="card ai-settings" id="aiSettings">
+    <summary><b>AI 도우미 설정</b> <span id="aiState" class="badge">확인 중</span></summary>
+    <p class="muted small">설문 화면의 "말로 답하기"와 결과 화면의 "물어보기"에 쓰는 OpenRouter API 키입니다.
+      키는 이 노트북의 <code>ai_settings.json</code>에만 저장되고, 다른 기기나 브라우저로는 보내지 않습니다.</p>
+    <form id="aiForm" autocomplete="off">
+      <label class="field-label" for="aiKey">OpenRouter API 키</label>
+      <input type="password" id="aiKey" autocomplete="new-password" spellcheck="false" placeholder="sk-or-v1-… (바꿀 때만 입력)">
+      <label class="field-label" for="aiModel">모델</label>
+      <input type="text" id="aiModel" spellcheck="false">
+      <div class="actions" style="margin-top:12px">
+        <button class="btn primary" type="submit" id="aiSave">저장</button>
+        <button class="btn" type="button" id="aiTest">연결 확인</button>
+        <button class="btn danger" type="button" id="aiClear">키 지우기</button>
+      </div>
+      <p class="small ai-msg" id="aiMsg" role="status"></p>
+    </form>
+  </details>
+  <div id="list"><p class="muted small">불러오는 중…</p></div>
+</main>
+<script src="/common.js"></script>
+<script>
+(function () {
+  var el = Survey.el;
+  var DONE_MESSAGE = {copy: "복사본을 만들었습니다 (마감 상태). 문항을 바꾼 뒤 '응답 받기'를 누르세요."};
+  var CONFIRM = {
+    reset: "응답을 모두 지울까요? 되돌릴 수 없습니다.",
+    delete: "설문과 응답을 모두 삭제할까요? 되돌릴 수 없습니다.",
+  };
+
+  function status(message, isError) {
+    Survey.replace("status", message ? [el("div", {class: "card " + (isError ? "error-card" : "ok-card"),
+                                                    role: isError ? "alert" : "status", text: message})] : []);
+  }
+
+  async function copyText(text, button) {
+    try {
+      await navigator.clipboard.writeText(text);
+      button.textContent = "복사됨";
+    } catch (e) {
+      window.prompt("자동 복사가 안 됩니다. 직접 복사하세요 (Ctrl+C)", text);
+      return;
+    }
+    setTimeout(function () { button.textContent = "복사"; }, 1500);
+  }
+
+  function addressRow(label, url) {
+    var button = el("button", {class: "btn", type: "button", text: "복사",
+                               onclick: function () { copyText(url, button); }});
+    return el("div", {class: "addr-row"}, [el("span", {class: "muted", text: label}), el("code", {text: url}), button]);
+  }
+
+  async function runCommand(cmd, survey, button) {
+    if (CONFIRM[cmd] && !window.confirm("'" + survey.title + "'\n" + CONFIRM[cmd])) return;
+    button.disabled = true;   // 두 번 누르기 방지
+    try {
+      await Survey.api("POST", "/api/adminProc", {cmd: cmd, id: survey.id}, {admin: true});
+      status(DONE_MESSAGE[cmd] || "", false);
+      await load();
+    } catch (e) {
+      status(e.message, true);
+      button.disabled = false;
+    }
+  }
+
+  function commandButton(text, cmd, survey, className, disabled) {
+    var button = el("button", {class: "btn " + (className || ""), type: "button", text: text, disabled: !!disabled,
+                               onclick: function () { runCommand(cmd, survey, button); }});
+    return button;
+  }
+
+  function surveyCard(s, base) {
+    var hasAnswers = s.cnt > 0;
+    var surveyUrl = base + "/survey.html?code=" + s.code;
+    var resultUrl = base + "/result.html?code=" + s.code;
+    return el("div", {class: "card"}, [
+      el("div", {class: "row-between"}, [
+        el("div", {}, [
+          el("h2", {class: "inline-title"}, [s.title + " ",
+            el("span", {class: s.open == 1 ? "badge open" : "badge", text: s.open == 1 ? "응답 받는 중" : "마감"})]),
+          el("div", {class: "muted small", text: "응답 " + s.cnt + "명 · 문항 " + s.q.length + "개 · 코드 " + s.code}),
+        ]),
+        s.open == 1 ? commandButton("마감하기", "close", s) : commandButton("응답 받기", "open", s, "primary"),
+      ]),
+      el("div", {class: "addresses"}, [addressRow("응답 주소", surveyUrl), addressRow("결과 주소", resultUrl)]),
+      el("div", {class: "actions"}, [
+        el("a", {class: "btn", href: "/admin_edit.html?id=" + s.id, text: hasAnswers ? "제목 수정" : "수정"}),
+        el("a", {class: "btn", href: "/survey.html?code=" + s.code, target: "_blank", text: "미리 보기"}),
+        el("a", {class: "btn", href: "/result.html?code=" + s.code, target: "_blank", text: "결과"}),
+        commandButton("복사해서 새 설문", "copy", s),
+        commandButton("응답 초기화", "reset", s, "danger", !hasAnswers),
+        commandButton("삭제", "delete", s, "danger"),
+      ]),
+    ]);
+  }
+
+  async function load() {
+    var res;
+    try {
+      res = await Survey.api("GET", "/api/adminList");
+    } catch (e) {
+      // 403(이 노트북이 아님)과 서버 오류를 구분해서 보여준다. 메시지는 서버가 정한다.
+      Survey.replace("list", [Survey.errorCard("목록을 불러오지 못했습니다. " + e.message)]);
+      return;
+    }
+    var base = res.lanBase || res.localBase;
+    var cards = res.data.map(function (s) { return surveyCard(s, base); });
+    if (cards.length === 0) {
+      cards.push(el("div", {class: "card notice muted", text: "아직 설문이 없습니다. ＋ 새 설문을 눌러 만들어 보세요."}));
+    }
+    if (!res.lanBase) {
+      cards.push(el("p", {class: "muted small center",
+        text: "지금은 이 노트북에서만 응답할 수 있습니다. 와이파이로 공유하려면 HOST=0.0.0.0 으로 서버를 실행하세요."}));
+    }
+    Survey.replace("list", cards);
+  }
+
+  load();
+
+  // ---- AI 도우미 설정. 서버는 키를 돌려주지 않고 끝 4자리만 알려준다. ----
+  var aiMsg = document.getElementById("aiMsg");
+  var aiKey = document.getElementById("aiKey");
+  var aiModel = document.getElementById("aiModel");
+
+  function showAi(st) {
+    var state = document.getElementById("aiState");
+    state.textContent = st.configured ? "켜짐 (키 " + st.keyHint + ")" : "꺼짐 (키 없음)";
+    state.className = st.configured ? "badge open" : "badge";
+    aiModel.value = st.model;
+    if (st.defaultModel) aiModel.placeholder = st.defaultModel;
+    document.getElementById("aiClear").disabled = st.source !== "file";
+    if (st.source === "env") aiMsg.textContent = "지금은 환경 변수 OPENROUTER_API_KEY 의 키를 쓰고 있습니다.";
+    if (!st.configured) document.getElementById("aiSettings").open = true;
+  }
+
+  async function aiRequest(button, body, done) {
+    button.disabled = true;
+    aiMsg.textContent = "";
+    try {
+      var res = await Survey.api("POST", body === null ? "/api/adminAiTest" : "/api/adminAiSave", body || undefined,
+                                 {admin: true});
+      done(res);
+    } catch (e) {
+      aiMsg.textContent = e.message;
+    }
+    button.disabled = false;
+  }
+
+  document.getElementById("aiForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    aiRequest(document.getElementById("aiSave"), {key: aiKey.value, model: aiModel.value}, function (res) {
+      aiKey.value = "";   // 저장한 키는 화면에 남기지 않는다
+      showAi(res);
+      aiMsg.textContent = "저장했습니다." + (res.configured ? " '연결 확인'으로 키가 맞는지 확인해 보세요." : "");
+    });
+  });
+  document.getElementById("aiTest").addEventListener("click", function (e) {
+    aiRequest(e.currentTarget, null, function (res) {
+      aiMsg.textContent = "연결됨: " + res.model + " → \"" + res.answer + "\"";
+    });
+  });
+  document.getElementById("aiClear").addEventListener("click", function (e) {
+    if (!window.confirm("저장된 API 키를 지울까요? AI 도우미가 꺼집니다.")) return;
+    aiRequest(e.currentTarget, {clearKey: true, model: aiModel.value}, function (res) {
+      showAi(res);
+      aiMsg.textContent = "키를 지웠습니다.";
+    });
+  });
+  Survey.api("GET", "/api/adminAi").then(showAi, function (e) { aiMsg.textContent = e.message; });
+})();
+</script>
+</body>
+</html>

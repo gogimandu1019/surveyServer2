@@ -1,0 +1,157 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>설문 편집</title>
+<link rel="stylesheet" type="text/css" href="/style.css" />
+</head>
+<body onload="init()">
+<main>
+  <div class="card">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td><h1 id="heading">새 설문</h1></td>
+      <td align="right"><a class="btn" href="/admin.html">← 목록</a></td>
+    </tr></table>
+    <div style="font-size:13px;color:var(--muted);margin:12px 0 4px;font-weight:600">설문 제목</div>
+    <input type="text" id="title" maxlength="200" placeholder="예: 3분기 팀 회고">
+    <div style="font-size:13px;color:var(--muted);margin:12px 0 4px;font-weight:600">안내 문구 (선택)</div>
+    <textarea id="desc" maxlength="2000" style="min-height:64px" placeholder="응답자에게 보여줄 설명"></textarea>
+  </div>
+  <div id="lock"></div>
+  <div id="qs"></div>
+  <button class="btn block" id="add" type="button" onclick="arrQ.push({id:'q'+Math.random().toString(16).substring(2,10),type:'single',label:'',required:true,options:['',''],allowOther:false,max:5}); draw();">＋ 문항 추가</button>
+  <p class="error" id="err"></p>
+  <div style="position:sticky;bottom:0;padding:12px 0 16px;text-align:right"><button class="btn primary" onclick="save()">저장</button></div>
+</main>
+<script type="text/javascript">
+var ID = "";
+var arrQ = [];
+var bLock = false;
+var arr = location.search.substring(1).split("&");
+for (var i = 0; i < arr.length; i++) {
+	if (arr[i].split("=")[0] == "id") ID = arr[i].split("=")[1];
+}
+ID = ID.replace(/[^0-9]/g, "");
+
+function init() {
+	if (ID == "") {
+		arrQ.push({id: 'q' + Math.random().toString(16).substring(2, 10), type: 'single', label: '', required: true, options: ['', ''], allowOther: false, max: 5});
+		draw();
+		return;
+	}
+	var xhr = new XMLHttpRequest();
+	xhr.open("GET", "/api/adminGet?id=" + ID, true);
+	xhr.onreadystatechange = function() {
+		if (xhr.readyState == 4 && xhr.status == 200) {
+			var res = eval("(" + xhr.responseText + ")");
+			if (res.result != "OK") {
+				document.getElementById("heading").innerHTML = "설문을 찾을 수 없습니다";
+				return;
+			}
+			document.getElementById("heading").innerHTML = "설문 수정";
+			document.getElementById("title").value = res.data.title;
+			document.getElementById("desc").value = res.data.desc;
+			arrQ = res.data.q;
+			for (var i = 0; i < arrQ.length; i++) {
+				if (!arrQ[i].options) arrQ[i].options = ['', ''];
+				if (!arrQ[i].allowOther) arrQ[i].allowOther = false;
+				if (!arrQ[i].max) arrQ[i].max = 5;
+			}
+			if (res.data.cnt > 0) {
+				bLock = true;
+				document.getElementById("lock").innerHTML = "<div class='card' style='background:var(--accent-soft);font-size:14px'>응답이 " + res.data.cnt + "개 있어서 문항은 바꿀 수 없습니다. 제목과 안내 문구만 고칠 수 있어요. 문항을 바꾸려면 목록에서 <b>복사해서 새 설문</b>을 쓰세요.</div>";
+			}
+			draw();
+		}
+	}
+	xhr.send(null);
+}
+
+// 화면 다시 그리기 (매번 전체 다시 그림)
+function draw() {
+	var html = "";
+	var dis = "";
+	if (bLock == true) dis = " disabled";
+	for (var i = 0; i < arrQ.length; i++) {
+		var q = arrQ[i];
+		html += "<div class='card'>";
+		html += "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr><td width='28'><b class='muted'>" + (i + 1) + "</b></td><td>";
+		html += "<select style='width:auto' onchange=\"arrQ[" + i + "].type=this.value; draw();\"" + dis + ">";
+		html += "<option value='text'" + (q.type == "text" ? " selected" : "") + ">단답</option>";
+		html += "<option value='textarea'" + (q.type == "textarea" ? " selected" : "") + ">장문</option>";
+		html += "<option value='rating'" + (q.type == "rating" ? " selected" : "") + ">점수</option>";
+		html += "<option value='single'" + (q.type == "single" ? " selected" : "") + ">하나 고르기</option>";
+		html += "<option value='multi'" + (q.type == "multi" ? " selected" : "") + ">여러 개 고르기</option>";
+		html += "<option value='yesno'" + (q.type == "yesno" ? " selected" : "") + ">예 / 아니오</option>";
+		html += "<option value='date'" + (q.type == "date" ? " selected" : "") + ">날짜</option>";
+		html += "</select></td><td align='right'>";
+		// 위로 / 아래로 / 삭제
+		if (i > 0) html += "<button class='btn' style='padding:6px 9px' onclick=\"var t=arrQ[" + i + "]; arrQ[" + i + "]=arrQ[" + (i - 1) + "]; arrQ[" + (i - 1) + "]=t; draw();\"" + dis + ">↑</button> ";
+		else html += "<button class='btn' style='padding:6px 9px' disabled>↑</button> ";
+		if (i < arrQ.length - 1) html += "<button class='btn' style='padding:6px 9px' onclick=\"var t=arrQ[" + i + "]; arrQ[" + i + "]=arrQ[" + (i + 1) + "]; arrQ[" + (i + 1) + "]=t; draw();\"" + dis + ">↓</button> ";
+		else html += "<button class='btn' style='padding:6px 9px' disabled>↓</button> ";
+		html += "<button class='btn danger' style='padding:6px 9px' onclick=\"if(arrQ[" + i + "].label=='' || confirm('이 문항을 삭제할까요?')){arrQ.splice(" + i + ",1); draw();}\"" + dis + ">✕</button>";
+		html += "</td></tr></table>";
+		html += "<div style='font-size:13px;color:var(--muted);margin:12px 0 4px;font-weight:600'>질문</div>";
+		html += "<input type='text' maxlength='500' placeholder='질문을 입력하세요' value=\"" + String(q.label).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;") + "\" onkeyup='arrQ[" + i + "].label=this.value' onchange='arrQ[" + i + "].label=this.value'" + dis + ">";
+		if (q.type == "single" || q.type == "multi") {
+			html += "<div style='font-size:13px;color:var(--muted);margin:12px 0 4px;font-weight:600'>선택지 (한 줄에 하나씩)</div>";
+			html += "<textarea rows='4' onkeyup=\"arrQ[" + i + "].options=this.value.split('\\n')\" onchange=\"arrQ[" + i + "].options=this.value.split('\\n')\"" + dis + ">" + String(q.options.join("\n")).replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</textarea>";
+			html += "<label style='display:inline-flex;gap:6px;font-size:14px;margin:10px 16px 0 0'><input type='checkbox' onclick='arrQ[" + i + "].allowOther=this.checked'" + (q.allowOther ? " checked" : "") + dis + ">'기타 (직접 입력)' 추가</label>";
+		}
+		if (q.type == "rating") {
+			html += "<div style='font-size:13px;color:var(--muted);margin:12px 0 4px;font-weight:600'>점수 범위</div>";
+			html += "<select style='width:auto' onchange='arrQ[" + i + "].max=parseInt(this.value)'" + dis + "><option value='5'" + (q.max != 10 ? " selected" : "") + ">1 ~ 5</option><option value='10'" + (q.max == 10 ? " selected" : "") + ">1 ~ 10</option></select> ";
+		}
+		html += "<label style='display:inline-flex;gap:6px;font-size:14px;margin-top:10px'><input type='checkbox' onclick='arrQ[" + i + "].required=this.checked'" + (q.required ? " checked" : "") + dis + ">필수 응답</label>";
+		html += "</div>";
+	}
+	document.getElementById("qs").innerHTML = html;
+	if (bLock == true) document.getElementById("add").style.display = "none";
+}
+
+// 저장 (신규/수정 같이 씀)
+function save() {
+	var arr2 = [];
+	for (var i = 0; i < arrQ.length; i++) {
+		var q = arrQ[i];
+		var o = {id: q.id, type: q.type, label: String(q.label).replace(/^\s+|\s+$/g, ""), required: q.required == true};
+		if (q.type == "single" || q.type == "multi") {
+			o.options = [];
+			for (var j = 0; j < q.options.length; j++) {
+				var x = String(q.options[j]).replace(/^\s+|\s+$/g, "");
+				if (x != "") o.options.push(x);
+			}
+			o.allowOther = q.allowOther == true;
+		}
+		if (q.type == "rating") {
+			if (q.max == 10) o.max = 10;
+			else o.max = 5;
+		}
+		arr2.push(o);
+	}
+	var data = {"title": document.getElementById("title").value, "desc": document.getElementById("desc").value, "q": arr2};
+	if (ID == "") data.cmd = "new";
+	else { data.cmd = "update"; data.id = ID; }
+	document.getElementById("err").innerHTML = "";
+	var xhr = new XMLHttpRequest();
+	xhr.open("POST", "/api/adminProc", true);
+	xhr.setRequestHeader("Content-Type", "application/json");
+	xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+	xhr.onreadystatechange = function() {
+		if (xhr.readyState == 4) {
+			if (xhr.status == 200) {
+				var res = eval("(" + xhr.responseText + ")");
+				if (res.result == "OK") location.href = "/admin.html";
+				else document.getElementById("err").innerHTML = res.msg;
+			} else {
+				document.getElementById("err").innerHTML = "저장 실패 (" + xhr.status + ")";
+			}
+		}
+	}
+	xhr.send(JSON.stringify(data));
+}
+</script>
+</body>
+</html>
